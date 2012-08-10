@@ -289,4 +289,26 @@ class LogPluginTest extends \Guzzle\Tests\GuzzleTestCase
             $this->assertContains("\nresp", $gen);
         }
     }
+
+    public function testLogsExtras()
+    {
+        $this->getServer()->enqueue("HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\ndata");
+
+        $client = new Client($this->getServer()->getUrl());
+        $plugin = new LogPlugin($this->logAdapter, LogPlugin::LOG_CONTEXT | LogPlugin::LOG_HEADERS | LogPlugin::LOG_BODY);
+        $client->getEventDispatcher()->addSubscriber($plugin);
+        $request = $client->put('', null, EntityBody::factory('send'));
+
+        ob_start();
+        $request->send();
+        $message = ob_get_clean();
+
+        $parts = explode("\n", trim($message));
+
+        //Check if the last line of the message contains extras
+        $this->assertRegExp(
+            "/.* - 7 guzzle.request, .*, [0-9]+(\.[0-9]+)?, [0-9]+, [0-9]+, send, data/", 
+            array_pop($parts)
+        );
+    }
 }

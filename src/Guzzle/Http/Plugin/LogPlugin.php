@@ -181,6 +181,10 @@ class LogPlugin implements EventSubscriberInterface
     private function log(RequestInterface $request, Response $response = null)
     {
         $message = '';
+        $extras = array(
+            'category'      => 'guzzle.request',
+            'host'          => $this->hostname
+        );
 
         if ($this->settings & self::LOG_CONTEXT) {
             // Log common contextual information
@@ -191,12 +195,16 @@ class LogPlugin implements EventSubscriberInterface
 
             // If a response is set, then log additional contextual information
             if ($response) {
+                $extras['totalTime']     = $response->getInfo('total_time');
+                $extras['speedUpload']   = $response->getInfo('speed_upload');
+                $extras['speedDownload'] = $response->getInfo('speed_download');
+
                 $message .= sprintf(' - %s %s - %s %s %s',
                     $response->getStatusCode(),
                     $response->getContentLength() ?: 0,
-                    $response->getInfo('total_time'),
-                    $response->getInfo('speed_upload'),
-                    $response->getInfo('speed_download')
+                    $extras['totalTime'],
+                    $extras['speedUpload'],
+                    $extras['speedDownload']
                 );
             }
         }
@@ -212,22 +220,22 @@ class LogPlugin implements EventSubscriberInterface
             // Filter cURL's verbose output based on config settings
             $message .= $this->parseCurlLog($request);
 
+            if ($request instanceof EntityEnclosingRequestInterface) {
+
+                $extras['requestBody'] = $this->getRequestBody($request);
+            }
+
             // Log the response body if the response is available
             if ($this->settings & self::LOG_BODY && $response) {
-                if ($request->getParams()->get('response_wire')) {
-                    $message .= (string) $request->getParams()->get('response_wire');
-                } else {
-                    $message .= $response->getBody(true);
-                }
+
+                $extras['responseBody'] = $this->getResponseBody($request, $response);
+                $message .= $extras['responseBody'];
             }
         }
 
-        // Send the log message to the adapter, adding a category and host
+        // Send the log message to the adapter, adding additional data
         $priority = $response && !$response->isSuccessful() ? LOG_ERR : LOG_DEBUG;
-        $this->logAdapter->log(trim($message), $priority, array(
-            'category' => 'guzzle.request',
-            'host'     => $this->hostname
-        ));
+        $this->logAdapter->log(trim($message), $priority, $extras);
     }
 
     /**
@@ -256,16 +264,49 @@ class LogPlugin implements EventSubscriberInterface
                 // Add the request body if needed
                 if ($this->settings & self::LOG_BODY) {
                     if (trim($line) == '' && $request instanceof EntityEnclosingRequestInterface) {
-                        if ($request->getParams()->get('request_wire')) {
-                            $message .= (string) $request->getParams()->get('request_wire') . "\r\n";
-                        } else {
-                            $message .= (string) $request->getBody() . "\r\n";
-                        }
+                        $message .= $this->getRequestBody($request) . "\r\n";
                     }
                 }
             }
         }
 
         return $message;
+    }
+
+    /**
+     * Returns request body
+     * 
+     * @param EntityEnclosingRequestInterface $request Request that has a curl handle
+     *
+     * @return string
+     */
+    private function getRequestBody(EntityEnclosingRequestInterface $request)
+    {
+        if ($request->getParams()->get('request_wire')) {
+            $requestBody = $request->getParams()->get('request_wire');
+        } else {
+            $requestBody = $request->getBody();
+        }
+
+        return (string) $requestBody;
+    }
+
+    /**
+     * Returns response body
+     * 
+     * @param RequestInterface $request  Request that has a curl handle
+     * @param Response         $response Response to log
+     *
+     * @return string
+     */
+    private function getResponseBody(RequestInterface $request, Response $response)
+    {
+        if ($request->getParams()->get('response_wire')) {
+            $responseBody = (string) $request->getParams()->get('response_wire');
+        } else {
+            $responseBody = $response->getBody(true);
+        }
+
+        return $responseBody;
     }
 }
